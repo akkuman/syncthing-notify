@@ -7,10 +7,12 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/gen2brain/beeep"
+	"github.com/tadvi/systray"
 )
 
 // ConfigFileName 配置文件名
@@ -39,6 +41,16 @@ type Event struct {
 	} `json:"data"`
 }
 
+// SyncTray 托盘图标
+type SyncTray struct {
+	Tray     *systray.Systray
+	CommIcon systray.HICON
+	TranIcon systray.HICON
+	MsgChan  chan string
+	IsFlash  bool
+}
+
+// flagConfig 命令行参数配置
 var flagConfig Config
 
 var defaultAddress = "http://127.0.0.1:8384"
@@ -103,8 +115,99 @@ func MsgNotify(title string, msg string) error {
 	return err
 }
 
+// loadIconFile 加载ico
+func loadIconFile(file string) (systray.HICON, error) {
+	path, err := filepath.Abs(file)
+	if err != nil {
+		return 0, err
+	}
+	icon, err := systray.NewIconFromFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return systray.HICON(icon), nil
+}
+
+// NewSyncTray 初始化托盘
+func NewSyncTray() (syncTray SyncTray) {
+	st, err := systray.New()
+	if err != nil {
+		panic(err)
+	}
+	commIcon, err := loadIconFile("ico.ico")
+	tranIcon, err := loadIconFile("trans.ico")
+	if err != nil {
+		panic(err)
+	}
+	st.SetIcon(commIcon)
+	st.SetTooltip("SyncNotify")
+	err = st.SetVisible(true)
+	if err != nil {
+		panic(err)
+	}
+	syncTray.Tray = st
+	syncTray.CommIcon = commIcon
+	syncTray.TranIcon = tranIcon
+	syncTray.MsgChan = make(chan string)
+
+	return
+}
+
+// FlashTray 托盘闪烁与消息
+func (st *SyncTray) FlashTray(msg string) {
+	// 将文件变动消息加入菜单
+	st.Tray.AppendMenu(msg, func() {
+		var index = 0
+		for i := range st.Tray.Menu {
+			index++
+			if st.Tray.Menu[i].Label == msg {
+				break
+			}
+		}
+		st.Tray.Menu = append(st.Tray.Menu[:index-1], st.Tray.Menu[index:]...)
+	})
+	st.MsgChan <- msg
+}
+
+// Run 托盘启动
+func (st *SyncTray) Run() {
+	st.Tray.OnClick(func() {
+		st.IsFlash = false
+	})
+	// 加入退出菜单
+	st.AppendMenu("Exit", func() {
+		os.Exit(0)
+	})
+	go func() {
+		count := 0
+		st.IsFlash = false
+		for {
+			select {
+			case <-st.MsgChan:
+				st.IsFlash = true
+				st.Tray.SetTooltip("点击查看变动")
+			default:
+				if !st.IsFlash {
+					st.Tray.SetIcon(st.CommIcon)
+					continue
+				}
+				if count%2 == 0 {
+					st.Tray.SetIcon(st.CommIcon)
+				} else {
+					st.Tray.SetIcon(st.TranIcon)
+				}
+				count++
+				time.Sleep(300 * time.Millisecond)
+			}
+		}
+	}()
+	go st.Tray.Run()
+}
+
 func main() {
 	config := LoadConfig()
+	st := NewSyncTray()
+	st.Run()
 
 	url := fmt.Sprintf("%s/rest/events", config.Address)
 	since := config.Since
@@ -137,6 +240,7 @@ func main() {
 		// 桌面提醒
 		for _, event := range events {
 			msg := fmt.Sprintf("%s 有变动", event.Data.Item)
+			go st.FlashTray(event.Data.Item)
 			err := MsgNotify(config.Title, msg)
 			if err != nil {
 				fmt.Println("error notify", err)

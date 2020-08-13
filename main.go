@@ -18,10 +18,11 @@ var ConfigFileName = "config.json"
 
 // Config 配置
 type Config struct {
-	Address string `json:"address"`
-	APIKey  string `json:"apikey"`
-	Title   string `json:"title"`
-	Since   int    `json:"since"`
+	Address  string `json:"address"`
+	APIKey   string `json:"apikey"`
+	Title    string `json:"title"`
+	Since    int    `json:"since"`
+	IsNotify bool   `json:"is_notify"`
 }
 
 // Event 事件
@@ -45,12 +46,14 @@ var flagConfig Config
 var defaultAddress = "http://127.0.0.1:8384"
 var defaultAPIKey = ""
 var defaultTitle = "提醒"
+var defaultIsNotify = false
 
 func init() {
 	// 命令行参数解析
 	flag.StringVar(&flagConfig.Address, "address", defaultAddress, "syncthing web gui address")
 	flag.StringVar(&flagConfig.APIKey, "apikey", defaultAPIKey, "syncthing api key")
 	flag.StringVar(&flagConfig.Title, "title", defaultTitle, "notify title")
+	flag.BoolVar(&flagConfig.IsNotify, "notify", defaultIsNotify, "whether to give notice")
 
 	flag.Parse()
 }
@@ -92,6 +95,10 @@ func main() {
 		for _, event := range events {
 			msg := fmt.Sprintf("%s 有变动", event.Data.Item)
 			go st.FlashTray(event.Data.Item)
+			// 判断是否进行通知
+			if !config.IsNotify {
+				continue
+			}
 			err := MsgNotify(config.Title, msg)
 			if err != nil {
 				fmt.Println("error notify", err)
@@ -135,6 +142,9 @@ func LoadConfig() (config Config) {
 	if flagConfig.Title != defaultTitle || !isExists {
 		config.Title = flagConfig.Title
 	}
+	if flagConfig.IsNotify != defaultIsNotify || !isExists {
+		config.IsNotify = flagConfig.IsNotify
+	}
 	return
 }
 
@@ -152,7 +162,7 @@ func UpdateConfig(config Config) {
 }
 
 // MsgNotify 消息弹框提醒
-func MsgNotify(title string, msg string) error {
-	err := beeep.Notify(title, msg, "")
-	return err
+func MsgNotify(title string, msg string) (err error) {
+	err = beeep.Notify(title, msg, "")
+	return
 }
